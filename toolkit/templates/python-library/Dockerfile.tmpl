@@ -1,0 +1,23 @@
+# Copyright 2026.
+# SPDX-License-Identifier: Apache-2.0
+FROM python:3.9-slim
+
+WORKDIR /work
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git xxd file gdb vim-common && \
+    rm -rf /var/lib/apt/lists/*
+
+# Pin the vulnerable library version under test.
+RUN pip install --no-cache-dir "__PIP__"
+
+# Bring the library source in so the find-agent can READ it.
+ARG SRC_TAG=__TAG__
+RUN git clone --depth 1 --branch ${SRC_TAG} __GIT_URL__ /work/src || \
+    git clone __GIT_URL__ /work/src
+
+COPY harness_oracle.py /work/harness_oracle.py
+COPY entry.py /work/entry
+RUN chmod +x /work/entry
+
+CMD ["/bin/bash"]

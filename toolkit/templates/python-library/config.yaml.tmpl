@@ -1,0 +1,13 @@
+# Copyright 2026.
+# SPDX-License-Identifier: Apache-2.0
+image_tag: vuln-pipeline-__NAME__:latest
+github_url: __GIT_URL__
+commit: __COMMIT__
+binary_path: /work/entry
+source_root: /work
+build_command: python3 -c "import __IMPORT__; print('ok')"
+attack_surface: |
+  __ATTACK_SURFACE__
+known_bugs: []
+focus_areas:
+  - "__FOCUS__"

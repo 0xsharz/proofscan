@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+# Copyright 2026.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Target entry for: __NAME__
+# Contract: ./entry <input>
+#   exit 0        -> benign input (no finding)
+#   os._exit(134) -> the library reached an exploit primitive (the vuln)
+#
+# The oracle lives in harness_oracle.py. You normally only edit the SINK line.
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from harness_oracle import AuditHookOracle
+
+
+def main():
+    if len(sys.argv) != 2:
+        sys.stderr.write("usage: entry <input>\n")
+        return 2
+
+    # Read untrusted input BEFORE arming the oracle.
+    with open(sys.argv[1], "rb") as f:
+        data = f.read()
+
+    # Use the pinned-vulnerable source shipped in the image.
+    sys.path.insert(0, "/work/src/__SRC_SUBDIR__")
+    import __IMPORT__ as lib  # noqa: F401
+
+    # ============================================================
+    # THE VULNERABLE SINK — feed `data` (or data.decode()) into the
+    # one library call under test. See toolkit/COOKBOOK.md for ready
+    # snippets per vuln class. Example (PyYAML deserialization):
+    #     import yaml
+    #     result = yaml.load(data, Loader=yaml.FullLoader)
+    # ============================================================
+    with AuditHookOracle():
+        try:
+            __SINK__
+        except Exception:
+            return 0  # malformed/rejected input is not a finding
+
+    sys.stdout.write("benign: no exploit primitive reached\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

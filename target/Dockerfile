@@ -18,6 +18,9 @@ RUN pip install --no-cache-dir "PyYAML==5.3.1"
 ARG PYYAML_TAG=5.3.1
 RUN git clone --depth 1 --branch ${PYYAML_TAG} https://github.com/yaml/pyyaml /work/src
 
+# Reusable oracle library (imported by entry).
+COPY harness_oracle.py /work/harness_oracle.py
+
 # entry is a Python script acting as binary_path (executable taking one arg).
 COPY entry.py /work/entry
 RUN chmod +x /work/entry
