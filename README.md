@@ -13,9 +13,16 @@ detection oracle instead of relying on ASAN.
 |---|---|
 | `target/` | The **PyYAML** target — unsafe deserialization RCE (CVE-2020-14343). |
 | `reportlab-target/` | The **ReportLab** target — `rl_safe_eval` sandbox-escape RCE (CVE-2023-33733). |
+| `ytdlp-target/` | The **yt-dlp** target — OS command injection via `netrc_cmd` (CVE-2026-26331). |
+| `weasyprint-target/` | The **WeasyPrint** target — SSRF via redirect bypass (CVE-2025-68616). |
 | `toolkit/` | Reusable oracle + one-command generator + cookbook for adding new targets. |
 | `harness-patches/` | Fixes to the harness's own code (not target-specific) — see below. |
 | `demo/`, `scripts/`, `docs/`, `artifacts/` | PyYAML-specific demo, run scripts, write-ups, evidence. |
+
+Five targets now span four vulnerability classes: deserialization RCE,
+sandbox-escape RCE, OS command injection, and SSRF — each with a CVE
+independently verified against NVD/OSV.dev/GitHub Advisories before building,
+not assumed from memory (see each target's README for the verification trail).
 
 ## Three harness-level fixes shipped here (`harness-patches/`)
 

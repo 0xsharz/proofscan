@@ -1,0 +1,29 @@
+# Copyright 2026.
+# SPDX-License-Identifier: Apache-2.0
+image_tag: vuln-pipeline-weasyprint:latest
+github_url: https://github.com/Kozea/WeasyPrint
+commit: v67.0
+binary_path: /work/entry
+source_root: /work
+build_command: python3 -c "import weasyprint; print(weasyprint.__version__)"
+attack_surface: |
+  A Python service that renders attacker-influenced HTML to PDF via
+  weasyprint.HTML(string=html, url_fetcher=secure_fetcher).write_pdf() on
+  WeasyPrint 67.0 -- the common "invoice/resume/report to PDF" pattern. The
+  app implements its own SSRF guard (secure_fetcher) that blocks direct
+  requests to a specific internal service (127.0.0.1:5000). The bug
+  (CVE-2025-68616): WeasyPrint's default_url_fetcher fetches via
+  urllib.request.urlopen(), which follows HTTP redirects transparently --
+  the app's check only ever inspects the URL BEFORE the redirect, not where
+  the redirect actually lands. A second fixed local service, an open
+  redirector at 127.0.0.1:8080 (GET /bounce?to=<url> -> 302 to <url>, modeling
+  the many real open-redirect endpoints across the web -- URL shorteners,
+  ad-tracking click-throughs), is reachable because the guard only blocks the
+  internal service's specific port, not general web fetches. Any HTML the
+  entry renders that causes a fetch of
+  http://127.0.0.1:8080/bounce?to=http://127.0.0.1:5000/<anything>
+  reaches the "internal" canary despite the guard. Fixed in 68.0 (adds
+  allow_redirects=False to the internal fetch).
+known_bugs: []
+focus_areas:
+  - "weasyprint.urls.default_url_fetcher's use of urllib.request.urlopen(), which follows 301/302/307 redirects without re-checking the app's security policy against the redirected destination (CVE-2025-68616) -- reach the canary at 127.0.0.1:5000 via the open redirector at 127.0.0.1:8080/bounce?to=<url>, since secure_fetcher only blocks 127.0.0.1:5000 directly"
