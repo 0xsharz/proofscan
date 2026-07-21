@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Reusable "sanitizer" oracles for Python vuln-pipeline targets.
-# (Canonical copy — new_target.sh copies this into each generated target.)
 #
 # The harness bug-oracle is only "did `entry <input>` crash?". For memory bugs
 # ASAN provides that. For higher-level Python bugs there is no crash, so these
@@ -62,9 +61,15 @@ class AuditHookOracle:
     the input-file read (done before the block) do not trip it.
     """
 
-    def __init__(self, extra_events=(), extra_imports=(), sensitive_paths=None,
+    def __init__(self, extra_events=(), exclude_events=(), extra_imports=(), sensitive_paths=None,
                  watch_imports=True, watch_open=True):
-        self.events = set(_DEFAULT_EVENTS) | set(extra_events)
+        # exclude_events: drop defaults that are too broad for THIS target.
+        # E.g. a "safe eval" library that legitimately calls compile()/eval()
+        # on every request (benign or not) must exclude "compile"/"exec", or
+        # every request looks like an escape. Only the concrete dangerous
+        # primitive the escape must additionally reach (os.system, a dangerous
+        # import, ...) is a real signal in that case.
+        self.events = (set(_DEFAULT_EVENTS) | set(extra_events)) - set(exclude_events)
         self.imports = set(_DEFAULT_IMPORTS) | set(extra_imports)
         self.sensitive = tuple(sensitive_paths) if sensitive_paths is not None else _DEFAULT_SENSITIVE
         self.watch_imports = watch_imports

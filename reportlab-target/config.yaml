@@ -1,0 +1,21 @@
+# Copyright 2026.
+# SPDX-License-Identifier: Apache-2.0
+image_tag: vuln-pipeline-reportlab:latest
+github_url: https://github.com/MrBitBucket/reportlab-mirror
+commit: reportlab-3.6.12
+binary_path: /work/entry
+source_root: /work
+build_command: python3 -c "import reportlab; print(reportlab.Version)"
+attack_surface: |
+  A Python service that renders attacker-controlled markup with ReportLab's
+  Paragraph (reportlab.platypus) on ReportLab 3.6.12. ReportLab evaluates
+  expressions embedded in paragraph markup — e.g. a <font color="[ ... ]">
+  attribute — through rl_safe_eval, a home-grown "safe" evaluator. CVE-2023-33733:
+  the rl_safe_eval sandbox can be escaped (via type()/__globals__/__subclasses__
+  tricks) to run arbitrary Python such as os.system / subprocess — remote code
+  execution from a single crafted markup string. Fixed in 3.6.13. No network, no
+  auth — pure input parsing. The library source is readable in the image at
+  /usr/local/lib/python3.11/site-packages/reportlab (rl_safe_eval.py, paraparser.py).
+known_bugs: []
+focus_areas:
+  - "rl_safe_eval sandbox escape (reportlab/lib/rl_safe_eval.py __rl_safe_eval__ / rl_extended_literal_eval / __rl_getattr__) reached from a crafted <font color=\"[ ... ]\"> expression parsed by paraparser.py, using type()/__globals__/__subclasses__ to obtain os.system or subprocess (CVE-2023-33733)"

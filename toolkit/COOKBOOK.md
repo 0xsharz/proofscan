@@ -30,6 +30,29 @@ touch the oracle — only the sink changes:
 > If a class needs an extra event, pass it: `AuditHookOracle(extra_events={"os.putenv"})`.
 > For exploits that only touch disk, use `MarkerFileOracle("/work/pwned")` instead.
 
+## Watch out: "safe eval" / sandbox libraries need `exclude_events`
+
+If the vulnerable library is itself an expression evaluator — a template
+engine, a "safe eval", a rules/formula engine — its **normal, benign**
+operation already calls `compile()`/`eval()` on every input. Watching those
+events (the `AuditHookOracle` default) makes *every* input look like an
+escape — a real false-positive trap, not a hypothetical one: this happened
+on the ReportLab target (`rl_safe_eval` compiles every `<font color="[...]">`
+expression, even a harmless `[0,0,0,0]`).
+
+**Fix:** exclude the noisy default events and watch only the concrete
+dangerous primitive the *escape* must additionally reach:
+```python
+with AuditHookOracle(exclude_events={"compile", "exec"}, watch_imports=True, watch_open=False):
+    vulnerable_eval(untrusted_input)
+```
+Rule of thumb: if the library's **intended, documented** behavior already
+triggers an event, exclude it — only alarm on primitives that mean the
+sandbox failed (`os.system`, `subprocess.Popen`, a dangerous import actually
+reached, an outbound socket), not on "an expression was evaluated at all."
+Always test with a known-benign input from the library's own normal use
+before trusting a new oracle.
+
 ## Ready-to-run examples
 
 **Recreate the PyYAML target (the validated one):**
