@@ -17,7 +17,7 @@ detection oracle instead of relying on ASAN.
 | `harness-patches/` | Fixes to the harness's own code (not target-specific) — see below. |
 | `demo/`, `scripts/`, `docs/`, `artifacts/` | PyYAML-specific demo, run scripts, write-ups, evidence. |
 
-## Two harness-level fixes shipped here (`harness-patches/`)
+## Three harness-level fixes shipped here (`harness-patches/`)
 
 1. **Agent-image packaging** (`agent_image.py`) — the container that runs
    find/grade/report agents only kept `/work` from the target image, silently
@@ -25,7 +25,15 @@ detection oracle instead of relying on ASAN.
    compiled C extension. Fixed by building the agent image **FROM the target
    image** so its whole runtime survives. This is what let the ReportLab
    target grade correctly instead of hitting `ModuleNotFoundError`.
-2. **Crash-output vocabulary** (`asan.py`) — see below.
+2. **Crash-output vocabulary, output text** (`asan.py`) — the oracle's stderr
+   banner no longer claims to be AddressSanitizer for non-memory findings.
+3. **Crash-output vocabulary, the whole pipeline** (`harness/`, `tests/`) —
+   a full rename of the core status/data-model (`crash_found` → `finding_confirmed`,
+   `CrashArtifact` → `FindingArtifact`, `crash_type`/`crash_output` →
+   `finding_type`/`finding_evidence`, ...) across find/grade/judge/report/patch
+   and every prompt, so nothing in the pipeline's own contract assumes memory
+   safety. 354 tests pass; see `harness-patches/README.md` for full detail,
+   the deliberate scope cuts, and the real-agent validation run.
 
 ## Result (21 Jul 2026)
 

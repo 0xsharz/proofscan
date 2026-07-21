@@ -1,11 +1,17 @@
-# Harness patches (2 files)
+# Harness patches (3, growing to a 31-file rename for #3)
 
-Two small, additive, backward-compatible fixes to the upstream harness's own
-code (not target-specific). Both are regression-verified against every target
-in use (drlibs, pyyaml, reportlab) before being applied.
+Fixes to the upstream harness's own code (not target-specific), each
+regression-verified against every target in use (drlibs, pyyaml, reportlab)
+before being applied — the first two additive, the third a full mechanical
+rename plus 354 passing tests and a real-agent validation run.
 
-1. `agent_image.py` — agent-image packaging bug (below).
-2. `asan.py` — crash-output vocabulary honesty + specificity (further down).
+1. `agent_image.py` — agent-image packaging bug.
+2. `asan.py` — crash-output vocabulary honesty + specificity (superseded by
+   the more thorough version shipped in #3 below; kept for history).
+3. `harness/` + `tests/` — core status/data-model vocabulary renamed from
+   memory-safety-specific (`crash_found`, `CrashArtifact`, `crash_type`, ...)
+   to generic (`finding_confirmed`, `FindingArtifact`, `finding_type`, ...)
+   across the whole find→grade→judge→report→patch pipeline (further down).
 
 ---
 
@@ -184,3 +190,96 @@ change than this one.
 cp harness-patches/agent_image.py <harness-repo>/harness/agent_image.py
 cp harness-patches/asan.py        <harness-repo>/harness/asan.py
 ```
+
+(Patch 2's `asan.py` is superseded by Patch 3's version below — apply Patch 3
+instead if you're starting fresh.)
+
+---
+
+## Patch 3 — full vocabulary rename: memory-safety-specific → generic
+
+### Why this is bigger than Patch 2
+
+After Patch 2, the *reported* vocabulary was honest, but the harness's own
+*internal* status/data-model — `crash_found`/`crash_rejected`/`no_crash_found`,
+the `CrashArtifact` class, its `crash_type`/`crash_output` fields, the
+`<crash_type>`/`<crash_output>` XML tags every agent is instructed to emit —
+still assumed every finding is a memory-safety crash. That's the harness's
+*core contract*, used identically by every stage (find, grade, judge, report,
+patch) and by every target, including the two SecurityOracle-based ones.
+
+The user asked directly for this to be generic, and to confirm it wouldn't
+need redoing for the next use case. This patch renames it throughout:
+
+| Old | New |
+|---|---|
+| `crash_found` / `crash_rejected` / `no_crash_found` (status) | `finding_confirmed` / `finding_rejected` / `no_finding` |
+| `CrashArtifact` (class) | `FindingArtifact` |
+| `crash_type` (field / XML tag) | `finding_type` |
+| `crash_output` (field / XML tag) | `finding_evidence` |
+| `RunResult.crash` (field) | `RunResult.finding` |
+| `asan_excerpt()` / `crash_reason()` (functions) | `evidence_excerpt()` / `finding_reason()` |
+| `crash_file_from_frame()` / `crash_file` (novelty.py) | `finding_file_from_frame()` / `finding_file` |
+| `"asan_excerpt"` (found_bugs.jsonl / manifest.jsonl key) | `"evidence_excerpt"` |
+| "Crash Quality Tiers" (find-agent prompt header) | "Finding Quality Tiers" |
+
+**Scope discipline — what did NOT get renamed**, and why:
+
+- `harness/patch_grade.py`'s `_t1_passes()` and `harness/prompts/patch_prompt.py`'s
+  hardcoded `git diff -- '*.c' '*.h' ...` — genuinely C/C++-only behavior, not
+  a naming issue. Flagged with a docstring/comment at each spot; `patch` has
+  not yet been run against a SecurityOracle-based target.
+- `report.py`'s `_SECTIONS` tuple (`heap_layout`, ...) and the report-prompt's
+  five analysis sections — a real taxonomy-design question (what should a
+  non-memory-safety exploitability report's sections be?), not a rename.
+  Agents already handle this gracefully today by writing "Not applicable" —
+  now made an explicit, correctly-scored option in the grader rubric
+  (`report_grader_prompt.py`) rather than an emergent behavior.
+- The literal ASAN-specific regexes in `asan.py` (`_ASAN_FRAME`, `_ASAN_SUMMARY`)
+  — accurately named; they only ever match native ASAN's own output shape.
+
+### Extra value added while renaming (not just find-and-replace)
+
+- **`find_prompt.py`'s quality-tier guidance** gained a clarifying paragraph:
+  the existing tiers ("assertion failure = LOW VALUE, keep searching") are
+  correct for native ASAN targets but would actively misdirect an agent on a
+  SecurityOracle-based target, where an assertion-style oracle abort *is* the
+  correct signal. The new paragraph tells the agent to check which kind of
+  target it's on and judge accordingly.
+- **`report_grader_prompt.py`'s scoring rubric** now explicitly scores a
+  reasoned "Not applicable" as a 2 (evidence-backed), not a 0 (stub) — closing
+  a real fairness gap the ReportLab run surfaced (its `heap_layout` section
+  scored only 1 under the old, implicit rubric).
+- **Every prompt template** dropped the unconditional, false
+  "(compiled with AddressSanitizer)" claim about the target binary — true for
+  drlibs, false for the two Python targets, previously shown to every agent
+  regardless of target.
+
+### How this was validated
+
+1. **354 tests, 0 failures, 5 skipped** (the 5 are `test_agent_sandbox.py`'s
+   opt-in real-infra tests, gated behind `REPRO=1`, unrelated to this change).
+   This includes `test_patch_grade_e2e.py`'s real-Docker tests against the
+   `canary` target — not just mocks.
+2. **Comprehensive repo-wide grep** for every old identifier across `harness/`,
+   `tests/`, `targets/`, `.claude/skills/`, and every `.md` doc — iterated
+   until zero matches remained, including fixing 3 real-format fixture
+   `result.json` files (`targets/canary/fixtures/results_sample/`) that
+   `vuln-pipeline patch`/`report` load directly, which would otherwise have
+   silently broken that documented demo path.
+3. **A real live agent run** (`vuln-pipeline run drlibs --model claude-opus-4-8`,
+   not a mock) — captured the exact prompt text sent to the container and
+   confirmed the renamed tags/headers/clarifying paragraph render correctly
+   verbatim. The run itself hit this environment's known Cyber Verification
+   Program throttling (`API Error: Claude Code is unable to respond...`,
+   documented from the original drlibs session) before landing a full
+   `finding_confirmed` result — a pre-existing external limitation of this
+   token, unrelated to this patch, not a regression it introduced.
+
+### Apply it
+
+```
+cp -r harness-patches/harness/*  <harness-repo>/harness/
+cp -r harness-patches/tests/*    <harness-repo>/tests/
+```
+Then `pip install -e ".[dev]"` and `pytest tests/ -q` to confirm.
