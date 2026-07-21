@@ -1,0 +1,9 @@
+# transient
+*.log
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+
+# large docker/build detritus (none expected, but just in case)
+*.tar

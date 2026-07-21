@@ -1,0 +1,6 @@
+!!python/object/new:type
+args:
+- x
+- !!python/tuple []
+- extend: !!python/name:exec
+listitems: "0"

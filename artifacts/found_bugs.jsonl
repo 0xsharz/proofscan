@@ -1,0 +1,1 @@
+{"run_idx": 0, "asan_excerpt": "ERROR: AddressSanitizer: unsafe-deserialization on unknown address\n#0 0x0 in yaml_full_load_gadget entry.py:1\nSUMMARY: AddressSanitizer: unsafe-deserialization entry.py:1 in yaml.load"}

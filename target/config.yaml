@@ -1,0 +1,25 @@
+# Copyright 2026.
+# SPDX-License-Identifier: Apache-2.0
+image_tag: vuln-pipeline-pyyaml:latest
+github_url: https://github.com/yaml/pyyaml
+commit: 20a120055ce2d702d8977c76b48033160b7b7c92   # tag 5.3.1
+binary_path: /work/entry
+source_root: /work
+build_command: python3 -c "import yaml; print(yaml.__version__)"
+attack_surface: |
+  A Python service that deserializes untrusted YAML with
+  yaml.load(data, Loader=yaml.FullLoader) on PyYAML 5.3.1. Real attack surface:
+  any caller of yaml.load / yaml.full_load on attacker-controlled YAML. The
+  FullLoader in 5.3.1 still permits object-construction gadgets
+  (python/object/new, python/object/apply, python/name, python/module) that
+  chain to arbitrary code execution (CVE-2020-14343; fixed in 5.4 by
+  restricting FullLoader). No wire protocol, no auth -- a pure parser of bytes.
+  The entry reads the input file and calls the vulnerable loader. The crash
+  oracle is an audit hook (PEP 578) that aborts (SIGABRT) the moment
+  deserialization reaches a code-exec / dangerous-import / network /
+  sensitive-file primitive; benign data YAML never trips it.
+known_bugs: []
+focus_areas:
+  - "FullLoader gadget construction (yaml/constructor.py FullConstructor: construct_python_object_apply / construct_python_object_new, find_python_name / find_python_module, construct_python_name) reaching exec / subprocess / os.system -- the CVE-2020-14343 bypass"
+  - "Multi-construct gadget chains: build a callable via python/name or python/object/new then invoke it through the extend/listitems/state machinery (__reduce__-style)"
+  - "python/object/apply and python/object/new argument handling that lets an attacker pass arbitrary args to a resolved callable"

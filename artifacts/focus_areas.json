@@ -1,0 +1,5 @@
+[
+  "FullLoader gadget construction (yaml/constructor.py FullConstructor: construct_python_object_apply / construct_python_object_new, find_python_name / find_python_module, construct_python_name) reaching exec / subprocess / os.system -- the CVE-2020-14343 bypass",
+  "Multi-construct gadget chains: build a callable via python/name or python/object/new then invoke it through the extend/listitems/state machinery (__reduce__-style)",
+  "python/object/apply and python/object/new argument handling that lets an attacker pass arbitrary args to a resolved callable"
+]
