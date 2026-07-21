@@ -40,6 +40,19 @@ gadget. Confirmed: `status: crash_found`, `passed: true`, `score: 0.9`,
    a reusable, documented tuning knob for any future "safe eval" style target
    (SSTI engines, expression sandboxes, etc.).
 
+3. **Naming/vocabulary bug** — the oracle originally reported findings with a
+   fake `AddressSanitizer` banner and a hardcoded generic type
+   (`"unsafe-behavior"` for every finding, regardless of the real sink). Fixed
+   in `../harness-patches/README.md` (patch 2): the banner is now honest
+   (`SECURITY-ORACLE`), the reported type is the real sink (`os.system`,
+   `compile`, ...), and the reported "frame" is the **real Python call stack**
+   at the point the vulnerability fired (e.g. `__rl_apply__ rl_safe_eval.py:1132`
+   for this target) instead of an identical placeholder for every finding.
+   `artifacts/result.json` and `artifacts/report_bug_00.json` in this folder
+   predate that fix and still show the old `AddressSanitizer`/`unsafe-behavior`
+   wording — kept as-is for the historical record of what the run actually
+   produced at the time; re-running the target now produces the honest format.
+
 ## Files
 
 - `Dockerfile`, `entry.py`, `config.yaml`, `harness_oracle.py` — the target.

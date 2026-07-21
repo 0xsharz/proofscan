@@ -1,18 +1,24 @@
 # Copyright 2026.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Reusable "sanitizer" oracles for Python vuln-pipeline targets.
+# Reusable vulnerability-detection oracles for Python vuln-pipeline targets.
 #
-# The harness bug-oracle is only "did `entry <input>` crash?". For memory bugs
-# ASAN provides that. For higher-level Python bugs there is no crash, so these
-# classes MANUFACTURE a deterministic crash (os._exit(134) + an ASAN-style
-# banner the pipeline already parses) the moment the target does something only
-# an exploit would do.
+# The harness's only detection primitive is "did `entry <input>` terminate
+# abnormally?" (nonzero exit / signal). A native memory-safety bug gives that
+# for free via AddressSanitizer. Higher-level Python vulnerabilities
+# (deserialization RCE, command injection, SSRF, path traversal, sandbox
+# escapes, ...) don't crash the interpreter on their own -- the exploit just
+# succeeds and the process keeps running -- so these oracles MANUFACTURE that
+# signal: the instant the target does something only a successful exploit
+# would do, terminate deliberately (os._exit(134)) and report it honestly as a
+# CONFIRMED VULNERABILITY. Nothing here pretends to be AddressSanitizer or any
+# native memory tool -- the banner says exactly what actually happened.
 #
 # ONE oracle, MANY classes. AuditHookOracle detects, via Python audit events
 # (PEP 578), the runtime primitives behind most Python vulnerabilities:
 #   - unsafe deserialization / object injection -> exec / compile / import
-#   - template injection (SSTI)                 -> exec / compile
+#   - unsafe "safe eval" / template injection    -> exec / compile (see
+#     exclude_events below if the library ALSO uses these for benign input)
 #   - command injection                         -> subprocess.Popen / os.system
 #   - SSRF                                       -> socket.connect / getaddrinfo
 #   - path traversal / arbitrary file read      -> open of a sensitive path
@@ -21,18 +27,44 @@
 
 import os
 import sys
+import traceback
+
+_THIS_FILE = os.path.basename(__file__)
 
 
-def abort_as_crash(sink, detail=""):
-    """Print an ASAN/assertion-style banner and terminate as a 'crash' (134)."""
+def abort_as_finding(sink, detail=""):
+    """Report a confirmed vulnerability and terminate the process (exit 134).
+
+    Prints a plain, tool-agnostic finding banner -- not a simulated
+    AddressSanitizer report -- naming the actual primitive reached (`sink`,
+    e.g. "os.system", "compile", "import:os") and the real Python call stack
+    at the moment it fired. The harness's crash-output parser
+    (harness/asan.py) recognizes the "SUMMARY: SecurityOracle: <sink> ..."
+    line the same way it recognizes native ASAN summaries, so dedup/report
+    tooling gets an accurate, sink-specific signal instead of a generic one.
+    """
+    frames = traceback.extract_stack()[:-1]  # caller frames; drop this frame
+    # Drop our own module's frames too (e.g. the audit-hook callback itself),
+    # so the top/deepest frame is the first REAL target/library frame -- the
+    # thing that actually differs between findings and that dedup/reports
+    # should key on, not "whichever oracle module we happened to use".
+    frames = [fr for fr in frames if os.path.basename(fr.filename) != _THIS_FILE]
+    frames = frames[-6:] if len(frames) > 6 else frames
+    frame_lines = [
+        "    #%d 0x0 in %s %s:%d" % (i, fr.name, os.path.basename(fr.filename), fr.lineno)
+        for i, fr in enumerate(reversed(frames))
+    ]
+    top = frames[-1] if frames else None
+    top_loc = "%s:%d" % (os.path.basename(top.filename), top.lineno) if top else "target:0"
+
     sys.stderr.write(
-        "=== HARNESS-ORACLE: exploit primitive reached ===\n"
-        "ERROR: AddressSanitizer: unsafe-behavior on unknown address\n"
-        "entry.py:1: oracle: Assertion 'exploit-primitive: %s' failed.\n"
-        "    #0 0x0 in target_sink entry.py:1\n"
+        "=== SECURITY-ORACLE: vulnerability confirmed ===\n"
+        "%s: oracle: Assertion 'vulnerable-primitive: %s' failed.\n"
+        "%s\n"
         "detail: %s\n"
-        "SUMMARY: AddressSanitizer: unsafe-behavior entry.py:1 in target_sink\n"
-        % (sink, str(detail)[:200])
+        "SUMMARY: SecurityOracle: %s %s in target_sink\n"
+        % (top_loc, sink, "\n".join(frame_lines) or "    #0 0x0 in <unknown> %s" % top_loc,
+           str(detail)[:200], sink, top_loc)
     )
     sys.stderr.flush()
     sys.stdout.flush()
@@ -80,15 +112,15 @@ class AuditHookOracle:
         if not self.armed:
             return
         if event in self.events:
-            abort_as_crash(event, repr(args))
+            abort_as_finding(event, repr(args))
         if self.watch_imports and event == "import":
             name = args[0] if args else ""
             if isinstance(name, str) and name.split(".")[0] in self.imports:
-                abort_as_crash("import:" + name, repr(args))
+                abort_as_finding("import:" + name, repr(args))
         if self.watch_open and event == "open":
             path = args[0] if args else ""
             if isinstance(path, str) and any(s in path for s in self.sensitive):
-                abort_as_crash("open:" + path, repr(args))
+                abort_as_finding("open:" + path, repr(args))
 
     def arm(self):
         sys.addaudithook(self._hook)  # cannot be removed; we gate with self.armed
@@ -122,4 +154,4 @@ class MarkerFileOracle:
 
     def check(self):
         if os.path.exists(self.marker_path):
-            abort_as_crash("marker-file", self.marker_path)
+            abort_as_finding("marker-file", self.marker_path)
