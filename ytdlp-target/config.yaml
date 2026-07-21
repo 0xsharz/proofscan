@@ -1,0 +1,27 @@
+# Copyright 2026.
+# SPDX-License-Identifier: Apache-2.0
+image_tag: vuln-pipeline-ytdlp:latest
+github_url: https://github.com/yt-dlp/yt-dlp
+commit: 2026.02.04
+binary_path: /work/entry
+source_root: /work
+build_command: python3 -c "import yt_dlp; print(yt_dlp.version.__version__)"
+attack_surface: |
+  A Python service that downloads/inspects an attacker-supplied URL via
+  yt_dlp.YoutubeDL({'netrc_cmd': 'echo {}', ...}).extract_info(url) on yt-dlp
+  2026.2.4. netrc_cmd is a legitimate, documented option (a shell command
+  template used to fetch site credentials); its {} placeholder is meant to be
+  substituted with a trusted "machine" hostname. Three extractors
+  (GetCourseRuIE, TeachableIE, TeachableCourseIE) instead derive that hostname
+  directly from urllib.parse.urlparse(url).hostname -- i.e. from the
+  attacker-supplied URL itself -- and the substitution is a naive
+  cmd.replace('{}', netrc_machine) with no shell-escaping, then executed via
+  subprocess with shell=True (extractor/common.py:_get_netrc_login_info).
+  A URL whose "hostname" segment contains shell metacharacters (e.g.
+  `https://;<shell command>;#.getcourse.ru/video`) achieves OS command
+  injection (CVE-2026-26331; fixed in 2026.2.21 via a strict character
+  allow-list on the machine value). No network reachability needed by the
+  attacker beyond getting the URL string processed once.
+known_bugs: []
+focus_areas:
+  - "GetCourseRuIE / TeachableIE / TeachableCourseIE _real_extract() deriving netrc_machine from urllib.parse.urlparse(url).hostname, then _get_netrc_login_info()'s cmd.replace('{}', netrc_machine) + Popen.run(cmd, shell=True) with no escaping (CVE-2026-26331)"
