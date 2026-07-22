@@ -243,7 +243,7 @@ is a safety gate: it refuses to hand you a scan for a sink it can't actually tri
 
 ```bash
 # Copy a target into the harness, build it, then scan it
-cp -r target ~/defending-code-reference-harness/targets/pyyaml
+cp -r pyyaml-target ~/defending-code-reference-harness/targets/pyyaml
 docker build -t vuln-pipeline-pyyaml:latest ~/defending-code-reference-harness/targets/pyyaml
 
 easyscan/scan.sh pyyaml --model claude-opus-4-8 --runs 3
@@ -344,7 +344,11 @@ results folder (or `--cve` / `--cvss` / `--fixed-version` / `--advisory` flags).
 
 ```text
 proofscan/
-├── target/              # PyYAML — unsafe deserialization RCE (CVE-2020-14343)
+├── pyyaml-target/       # PyYAML — unsafe deserialization RCE (CVE-2020-14343)
+│   ├── entry.py         #   the audit-hook detection oracle
+│   ├── config.yaml      #   target config
+│   ├── artifacts/       #   PoC + confirmed-run evidence
+│   └── demo/            #   runnable demo
 ├── reportlab-target/    # ReportLab — rl_safe_eval sandbox escape RCE (CVE-2023-33733)
 ├── ytdlp-target/        # yt-dlp — command injection via netrc_cmd (CVE-2026-26331)
 ├── weasyprint-target/   # WeasyPrint — SSRF via redirect bypass (CVE-2025-68616)
@@ -358,13 +362,12 @@ proofscan/
 ├── toolkit/             # reusable oracle + new_target.sh generator + COOKBOOK.md
 ├── harness-patches/     # fixes to the upstream harness
 ├── docs/                # write-ups and design notes
-├── demo/                # demo assets
-├── scripts/             # helper scripts
-└── artifacts/           # evidence from confirmed runs (PoCs, reports)
+└── scripts/             # helper scripts
 ```
 
-Plain-language runbooks live in [`easyscan/ONBOARD_GUIDE.md`](easyscan/ONBOARD_GUIDE.md) and
-each target's `README` / `GUIDE.md`.
+Every `*-target/` folder is **self-contained** — its PoC and confirmed-run evidence live in
+`<target>/artifacts/`. Plain-language runbooks live in
+[`easyscan/ONBOARD_GUIDE.md`](easyscan/ONBOARD_GUIDE.md) and each target's `README` / `GUIDE.md`.
 
 ---
 
