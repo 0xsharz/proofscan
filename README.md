@@ -83,11 +83,11 @@ cross-verified CVE** (checked against NVD, OSV.dev, and GitHub Advisories before
 
 | Class | Validated target (library) | CVE (benchmark) | What the run proves |
 |---|---|---|---|
-| Deserialization → RCE | PyYAML 5.3.1 (`pyyaml-target/`) | [CVE-2020-14343](https://nvd.nist.gov/vuln/detail/CVE-2020-14343) | `yaml.load(FullLoader)` gadget reaches `exec` |
-| Sandbox escape → RCE | ReportLab (`reportlab-target/`) | [CVE-2023-33733](https://nvd.nist.gov/vuln/detail/CVE-2023-33733) | `rl_safe_eval` escape reaches `os.system` |
-| Command injection | yt-dlp (`ytdlp-target/`) | [CVE-2026-26331](https://nvd.nist.gov/vuln/detail/CVE-2026-26331) | attacker hostname → `netrc_cmd` (`shell=True`) |
-| Command injection (blind) | textract (`textract-target/`) | [CVE-2016-10320](https://nvd.nist.gov/vuln/detail/CVE-2016-10320) | filename metacharacters → `antiword` shell call |
-| SSRF | WeasyPrint (`weasyprint-target/`) | [CVE-2025-68616](https://nvd.nist.gov/vuln/detail/CVE-2025-68616) | redirect bypass reaches an internal canary |
+| Deserialization → RCE | PyYAML 5.3.1 (`targets/pyyaml/`) | [CVE-2020-14343](https://nvd.nist.gov/vuln/detail/CVE-2020-14343) | `yaml.load(FullLoader)` gadget reaches `exec` |
+| Sandbox escape → RCE | ReportLab (`targets/reportlab/`) | [CVE-2023-33733](https://nvd.nist.gov/vuln/detail/CVE-2023-33733) | `rl_safe_eval` escape reaches `os.system` |
+| Command injection | yt-dlp (`targets/ytdlp/`) | [CVE-2026-26331](https://nvd.nist.gov/vuln/detail/CVE-2026-26331) | attacker hostname → `netrc_cmd` (`shell=True`) |
+| Command injection (blind) | textract (`targets/textract/`) | [CVE-2016-10320](https://nvd.nist.gov/vuln/detail/CVE-2016-10320) | filename metacharacters → `antiword` shell call |
+| SSRF | WeasyPrint (`targets/weasyprint/`) | [CVE-2025-68616](https://nvd.nist.gov/vuln/detail/CVE-2025-68616) | redirect bypass reaches an internal canary |
 
 The onboarder was validated the same way: pointed at **pyod 3.5.2** by name, it discovered the
 `joblib.load` sink in `pyod/utils/persistence.py`
@@ -243,7 +243,7 @@ is a safety gate: it refuses to hand you a scan for a sink it can't actually tri
 
 ```bash
 # Copy a target into the harness, build it, then scan it
-cp -r pyyaml-target ~/defending-code-reference-harness/targets/pyyaml
+cp -r targets/pyyaml ~/defending-code-reference-harness/targets/pyyaml
 docker build -t vuln-pipeline-pyyaml:latest ~/defending-code-reference-harness/targets/pyyaml
 
 easyscan/scan.sh pyyaml --model claude-opus-4-8 --runs 3
@@ -344,15 +344,16 @@ results folder (or `--cve` / `--cvss` / `--fixed-version` / `--advisory` flags).
 
 ```text
 proofscan/
-├── pyyaml-target/       # PyYAML — unsafe deserialization RCE (CVE-2020-14343)
-│   ├── entry.py         #   the audit-hook detection oracle
-│   ├── config.yaml      #   target config
-│   ├── artifacts/       #   PoC + confirmed-run evidence
-│   └── demo/            #   runnable demo
-├── reportlab-target/    # ReportLab — rl_safe_eval sandbox escape RCE (CVE-2023-33733)
-├── ytdlp-target/        # yt-dlp — command injection via netrc_cmd (CVE-2026-26331)
-├── weasyprint-target/   # WeasyPrint — SSRF via redirect bypass (CVE-2025-68616)
-├── textract-target/     # textract — command injection, blind test (CVE-2016-10320)
+├── targets/             # the vulnerability targets — one self-contained dir each
+│   ├── pyyaml/          #   PyYAML — unsafe deserialization RCE (CVE-2020-14343)
+│   │   ├── entry.py     #     the audit-hook detection oracle
+│   │   ├── config.yaml  #     target config
+│   │   ├── artifacts/   #     PoC + confirmed-run evidence
+│   │   └── demo/        #     runnable demo
+│   ├── reportlab/       #   ReportLab — rl_safe_eval sandbox escape RCE (CVE-2023-33733)
+│   ├── ytdlp/           #   yt-dlp — command injection via netrc_cmd (CVE-2026-26331)
+│   ├── weasyprint/      #   WeasyPrint — SSRF via redirect bypass (CVE-2025-68616)
+│   └── textract/        #   textract — command injection, blind test (CVE-2016-10320)
 ├── easyscan/            # the pipeline itself
 │   ├── onboard.sh       #   discover a sink in any package, scaffold + self-test a target
 │   ├── scan.sh          #   run the blind AI pipeline (exit 0 clean / 2 finding / 1 error)
