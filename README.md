@@ -32,8 +32,6 @@ pipeline can detect.
 - [Report-time enrichment](#report-time-enrichment-for-known-cves)
 - [CI/CD gating](#cicd-gating)
 - [Repository layout](#repository-layout)
-- [Harness patches](#harness-patches)
-- [Testing](#testing)
 - [Security & authorized use](#security--authorized-use)
 - [License](#license)
 
@@ -145,46 +143,66 @@ network egress restricted to the model API only.
 
 ## Setup
 
-**Host requirements** — a Linux host (or **WSL2 Ubuntu** on Windows) with a *native* Docker
-daemon. Docker Desktop's VM does **not** work, because the sandbox setup registers the gVisor
-`runsc` runtime in the host's own `dockerd`.
+ProofScan runs on **Linux** — every target is isolated in Docker under the gVisor (`runsc`)
+runtime, which needs a Linux kernel. Pick how you get a Linux host for your OS below, then run
+the **common steps** once inside it.
 
-### 1. Install the `defending-code-reference` harness
+> A *native* Docker daemon is required. Docker Desktop's VM does **not** work — the sandbox
+> setup registers the `runsc` runtime in the host's own `dockerd`.
 
-This repo plugs into Anthropic's autonomous vuln-discovery harness, which provides the
-`vuln-pipeline` CLI. Obtain it, then install it into a virtualenv:
+### Windows — via WSL2
+
+```powershell
+wsl --install -d Ubuntu      # install once, then open the Ubuntu shell for everything below
+```
+
+Inside Ubuntu, install the **native in-distro Docker Engine** (not Docker Desktop
+integration), plus `git`, Python 3.9+, and Node 20 with the `claude` CLI. Then run the
+**common steps**.
+
+> Drive any `wsl` commands from PowerShell (Git Bash mangles `/root/...` paths), and keep
+> double quotes around paths that contain a space.
+
+### macOS — via a Linux VM
+
+gVisor needs a Linux kernel, so run everything inside a lightweight Linux VM (or a remote
+Linux box):
 
 ```bash
+brew install colima docker
+colima start --cpu 4 --memory 8      # a Linux VM with a native Docker daemon
+```
+
+Inside the VM, install `git`, Python 3.9+, and Node 20 with the `claude` CLI, then run the
+**common steps**.
+
+### Linux — native
+
+Install **Docker Engine**, `git`, Python 3.9+, and Node 20 with the `claude` CLI, then run the
+common steps directly.
+
+### Common steps (inside your Linux environment)
+
+```bash
+# 1) Install the defending-code-reference harness (provides the `vuln-pipeline` CLI)
 cd defending-code-reference-harness
 python3 -m venv .venv && . .venv/bin/activate
-pip install -e .                     # installs the `vuln-pipeline` CLI
-```
+pip install -e .
 
-### 2. Provide a model token
-
-```bash
-claude setup-token                   # mint a CLAUDE_CODE_OAUTH_TOKEN
+# 2) Provide a model token
+claude setup-token                              # mints a CLAUDE_CODE_OAUTH_TOKEN
 echo "<the sk-ant-oat token>" > ~/.vp_token && chmod 600 ~/.vp_token
 export CLAUDE_CODE_OAUTH_TOKEN=$(cat ~/.vp_token)
+# (Bedrock / Vertex / ANTHROPIC_API_KEY also work — see the harness auth.py)
+
+# 3) Build the gVisor sandbox (one time)
+./scripts/setup_sandbox.sh                      # installs runsc, registers the runtime + egress proxy
+
+# 4) Add ProofScan and install its report dependencies
+git clone https://github.com/0xsharz/proofscan.git
+cd proofscan
+easyscan/install.sh                             # pillow + a mono font; smoke-tests the engine
 ```
-(Bedrock / Vertex / `ANTHROPIC_API_KEY` are also supported — see the harness `auth.py`.)
-
-### 3. Build the gVisor sandbox (one time)
-
-```bash
-./scripts/setup_sandbox.sh           # installs runsc, registers the runtime, builds the egress proxy
-```
-
-### 4. Add this repository
-
-```bash
-git clone https://github.com/0xsharz/pyyaml-vuln-target.git
-cd pyyaml-vuln-target
-easyscan/install.sh                  # installs report deps (pillow + a mono font); smoke-tests the engine
-```
-
-> **Windows / WSL note:** drive all `wsl` calls from PowerShell (not Git Bash, which mangles
-> `/root/...` paths). Keep the double quotes around any path that contains a space.
 
 ---
 
@@ -324,49 +342,29 @@ results folder (or `--cve` / `--cvss` / `--fixed-version` / `--advisory` flags).
 
 ## Repository layout
 
-| Path | What it is |
-|---|---|
-| `target/` | **PyYAML** target — unsafe deserialization RCE (CVE-2020-14343) |
-| `reportlab-target/` | **ReportLab** target — `rl_safe_eval` sandbox escape (CVE-2023-33733) |
-| `ytdlp-target/` | **yt-dlp** target — command injection via `netrc_cmd` (CVE-2026-26331) |
-| `weasyprint-target/` | **WeasyPrint** target — SSRF via redirect bypass (CVE-2025-68616) |
-| `textract-target/` | **textract** target — command injection, set up as a **blind test** (CVE-2016-10320) |
-| `easyscan/` | One-command **onboard + scan + professional reporting** (`onboard.sh`, `scan.sh`, `report.py`, `install.sh`, tests, guides) |
-| `toolkit/` | Reusable oracle + one-command target generator (`new_target.sh`) + **`COOKBOOK.md`** |
-| `harness-patches/` | Fixes to the harness's own code (see below) |
-| `docs/`, `demo/`, `scripts/`, `artifacts/` | Write-ups, demo assets, helper scripts, and evidence |
+```text
+proofscan/
+├── target/              # PyYAML — unsafe deserialization RCE (CVE-2020-14343)
+├── reportlab-target/    # ReportLab — rl_safe_eval sandbox escape RCE (CVE-2023-33733)
+├── ytdlp-target/        # yt-dlp — command injection via netrc_cmd (CVE-2026-26331)
+├── weasyprint-target/   # WeasyPrint — SSRF via redirect bypass (CVE-2025-68616)
+├── textract-target/     # textract — command injection, blind test (CVE-2016-10320)
+├── easyscan/            # the pipeline itself
+│   ├── onboard.sh       #   discover a sink in any package, scaffold + self-test a target
+│   ├── scan.sh          #   run the blind AI pipeline (exit 0 clean / 2 finding / 1 error)
+│   ├── report.py        #   build the professional HTML report + summary.json
+│   ├── install.sh       #   one-time setup + smoke test
+│   └── ONBOARD_GUIDE.md #   plain-language step-by-step runbook
+├── toolkit/             # reusable oracle + new_target.sh generator + COOKBOOK.md
+├── harness-patches/     # fixes to the upstream harness
+├── docs/                # write-ups and design notes
+├── demo/                # demo assets
+├── scripts/             # helper scripts
+└── artifacts/           # evidence from confirmed runs (PoCs, reports)
+```
 
 Plain-language runbooks live in [`easyscan/ONBOARD_GUIDE.md`](easyscan/ONBOARD_GUIDE.md) and
 each target's `README` / `GUIDE.md`.
-
----
-
-## Harness patches
-
-Three fixes to the upstream harness (not target-specific) ship in `harness-patches/`, each
-documented with root cause, fix, and validation:
-
-1. **Agent-image packaging** (`agent_image.py`) — the agent container now builds *from the
-   target image*, so a target's pip-installed dependencies and compiled extensions survive
-   (this is what let the ReportLab target grade correctly instead of `ModuleNotFoundError`).
-2. **Honest oracle vocabulary** (`asan.py`) — the crash parser recognizes the honest
-   `SECURITY-ORACLE` banner, so nothing has to pretend to be AddressSanitizer.
-3. **Pipeline vocabulary rename** — the core status model reads `finding_confirmed` /
-   `FindingArtifact` / `finding_type` instead of `crash_*`, so no part of the contract
-   assumes memory safety (354 harness tests pass).
-
----
-
-## Testing
-
-```bash
-.venv/bin/python -m pytest easyscan/tests/ -q      # 44 unit tests (report engine + onboarder)
-```
-
-The deterministic engines are fully unit-tested: PNG rendering, CVE/CWE/severity mapping, both
-`result.json` schemas, the safe Markdown→HTML renderer, the generic prose template + agent-
-output merge, sink-specific remediation, honest-framing checks, report-time enrichment,
-binary-PoC handling, and the onboarder's sink discovery, input routing, and scaffolding.
 
 ---
 
