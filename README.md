@@ -1,133 +1,371 @@
-# Non-memory-safety vulnerability targets for the defending-code-reference harness
+# ProofScan — Autonomous Vulnerability Discovery for Python
 
-Extends Anthropic's `defending-code-reference` autonomous vulnerability-discovery
-harness (originally built for **C memory bugs** found via AddressSanitizer) to
-**Python vulnerability classes that don't crash on their own** — unsafe
-deserialization, sandbox-escape RCE, and (via `toolkit/`) command injection,
-SSRF, path traversal, and more. Each target supplies its own purpose-built
-detection oracle instead of relying on ASAN.
+![Language](https://img.shields.io/badge/language-Python-3776AB?logo=python&logoColor=white)
+![Runtime](https://img.shields.io/badge/sandbox-gVisor%20%2B%20Docker-blue)
+![Classes](https://img.shields.io/badge/vuln%20classes-4-critical)
+![Targets](https://img.shields.io/badge/validated%20targets-5-success)
+![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
-## Repository contents
+> An autonomous, **execution-verified** vulnerability-discovery pipeline for Python packages.
+> Point it at any Python codebase — a folder, a PyPI name, or a GitHub URL — and it
+> discovers the dangerous code, builds an isolated test target, drives an AI agent to
+> **craft and prove a working exploit**, and writes a professional HTML security report.
+
+This project extends Anthropic's `defending-code-reference` harness — originally built to
+find **C memory-safety bugs** with AddressSanitizer — to the **Python vulnerability classes
+that never crash on their own**: unsafe deserialization, sandbox escape, OS command
+injection, and SSRF. Instead of relying on ASAN, each target ships a purpose-built **runtime
+oracle** that turns "an exploit actually happened" into a deterministic process abort the
+pipeline can detect.
+
+---
+
+## Table of contents
+
+- [Why this exists](#why-this-exists)
+- [What it can do — the four use cases](#what-it-can-do--the-four-use-cases)
+- [Language & tech stack](#language--tech-stack)
+- [How it works](#how-it-works)
+- [Setup](#setup)
+- [Usage — step by step, with examples](#usage--step-by-step-with-examples)
+- [What's in the report](#whats-in-the-report)
+- [Report-time enrichment](#report-time-enrichment-for-known-cves)
+- [CI/CD gating](#cicd-gating)
+- [Repository layout](#repository-layout)
+- [Harness patches](#harness-patches)
+- [Testing](#testing)
+- [Security & authorized use](#security--authorized-use)
+- [License](#license)
+
+---
+
+## Why this exists
+
+A memory-safety bug announces itself: the process crashes and AddressSanitizer prints a
+stack trace. A **logic** vulnerability does not. `yaml.load()` on a malicious document runs
+attacker code and returns normally; `pickle.loads()` executes a payload silently. There is
+no crash for a fuzzer or a pipeline to key on.
+
+The core idea here is a **tool-agnostic, honest execution oracle**. Each Python target wraps
+its sink in a [PEP 578](https://peps.python.org/pep-0578/) audit hook (`sys.addaudithook`)
+that aborts the process (`os._exit(134)` → the same exit code a SIGABRT produces) the instant
+deserialization/rendering reaches a dangerous primitive — `exec`/`compile`, `os.system`,
+`subprocess.Popen`, an outbound socket, a dangerous import, or a sensitive-file open. To the
+discovery pipeline, "the exploit fired" now looks exactly like "the target crashed" — so the
+same find → grade → judge → report loop that hunts C bugs works unchanged for Python RCE.
+
+The oracle is deliberately **honest**: it never prints a fake `AddressSanitizer` banner. It
+emits a `SECURITY-ORACLE` banner naming the real primitive reached (e.g. `os.system`) and the
+real Python call stack at the moment it fired.
+
+---
+
+## What it can do — the four use cases
+
+Five targets span four vulnerability classes, each pinned to a **real, cross-verified CVE**
+(checked against NVD, OSV.dev, and GitHub Advisories before building — never assumed):
+
+| # | Vulnerability class | Target (library) | CVE | Mechanism the oracle catches |
+|---|---|---|---|---|
+| 1 | **Unsafe deserialization → RCE** | PyYAML 5.3.1 (`target/`) | [CVE-2020-14343](https://nvd.nist.gov/vuln/detail/CVE-2020-14343) | `yaml.load(FullLoader)` gadget reaches `exec`/`compile` |
+| 2 | **Sandbox-escape → RCE** | ReportLab (`reportlab-target/`) | [CVE-2023-33733](https://nvd.nist.gov/vuln/detail/CVE-2023-33733) | `rl_safe_eval` escape reaches `os.system` |
+| 3 | **OS command injection** | yt-dlp (`ytdlp-target/`) | [CVE-2026-26331](https://nvd.nist.gov/vuln/detail/CVE-2026-26331) | attacker hostname → `netrc_cmd` with `shell=True` |
+| 3 | **OS command injection** (blind) | textract (`textract-target/`) | [CVE-2016-10320](https://nvd.nist.gov/vuln/detail/CVE-2016-10320) | filename metacharacters → `antiword` shell call |
+| 4 | **Server-Side Request Forgery** | WeasyPrint (`weasyprint-target/`) | [CVE-2025-68616](https://nvd.nist.gov/vuln/detail/CVE-2025-68616) | redirect bypass reaches an internal canary |
+
+Beyond these hand-built targets, the **auto-onboarder** (`easyscan/onboard.sh`) discovers and
+scaffolds new targets for these sink families automatically: deserialization
+(`pickle` / `dill` / `joblib` / `yaml` / `marshal` / …), OS command injection, template
+injection (SSTI), SSRF, and path traversal. It was validated end-to-end by onboarding
+**pyod 3.5.2** from just the package name — it found the `joblib.load` sink in
+`pyod/utils/persistence.py` ([CVE-2026-15529](https://nvd.nist.gov/vuln/detail/CVE-2026-15529))
+on its own, blind.
+
+---
+
+## Language & tech stack
+
+| Layer | Technology |
+|---|---|
+| Targets, oracle, onboarder, report engine | **Python 3.9–3.12** |
+| Detection oracle | Python **audit hooks** (PEP 578) — no external tooling |
+| Orchestration & helper scripts | **Bash** |
+| Target isolation | **Docker** images run under **gVisor (`runsc`)** with an egress allow-list |
+| AI agents (find / grade / report) | **Claude**, via the `defending-code-reference` `vuln-pipeline` |
+| Report rendering | Python + **Pillow** (terminal-screenshot proofs) → self-contained **HTML** |
+
+The vulnerable libraries themselves are pure Python (PyYAML, ReportLab, yt-dlp, WeasyPrint,
+textract), which is exactly why a memory sanitizer can't see the bugs and a runtime oracle is
+required.
+
+---
+
+## How it works
+
+```mermaid
+flowchart LR
+  A["Python package<br/>(folder · PyPI · GitHub)"] --> B["onboard.sh<br/>discover sink · scaffold · build · self-test"]
+  B -->|"PASS"| C["scan.sh<br/>blind AI pipeline"]
+  C --> D["find agent<br/>craft exploit input"]
+  D --> E["runtime oracle<br/>audit-hook abort = exit 134"]
+  E --> F["grade + judge<br/>score · reproduce · dedup"]
+  F --> G["report.py<br/>agent-written narrative"]
+  G --> H["report.html + summary.json<br/>exit code 0 / 2 / 1"]
+```
+
+1. **Onboard** greps the source for known sink patterns, an agent picks the real entry point
+   and writes example inputs, then it scaffolds a Docker target and **self-tests** it: the
+   exploit input must abort (exit 134) and a benign input must exit 0. Only a target that
+   passes this gate is worth scanning.
+2. **Scan** runs the blind pipeline: a *find* agent (which is **never told the bug**) crafts
+   an input, the oracle confirms whether it fired, a *grade* agent reproduces and scores it,
+   and a *judge* de-duplicates across runs.
+3. **Report** feeds the pipeline's own source-level analysis to a single **report-writer
+   agent** that writes the entire professional narrative; deterministic Python renders the
+   proof screenshots and assembles a self-contained, light-theme HTML page + `summary.json`.
+
+Everything executes inside the gVisor sandbox with the host filesystem unreachable and
+network egress restricted to the model API only.
+
+---
+
+## Setup
+
+**Host requirements** — a Linux host (or **WSL2 Ubuntu** on Windows) with a *native* Docker
+daemon. Docker Desktop's VM does **not** work, because the sandbox setup registers the gVisor
+`runsc` runtime in the host's own `dockerd`.
+
+### 1. Install the `defending-code-reference` harness
+
+This repo plugs into Anthropic's autonomous vuln-discovery harness, which provides the
+`vuln-pipeline` CLI. Obtain it, then install it into a virtualenv:
+
+```bash
+cd defending-code-reference-harness
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e .                     # installs the `vuln-pipeline` CLI
+```
+
+### 2. Provide a model token
+
+```bash
+claude setup-token                   # mint a CLAUDE_CODE_OAUTH_TOKEN
+echo "<the sk-ant-oat token>" > ~/.vp_token && chmod 600 ~/.vp_token
+export CLAUDE_CODE_OAUTH_TOKEN=$(cat ~/.vp_token)
+```
+(Bedrock / Vertex / `ANTHROPIC_API_KEY` are also supported — see the harness `auth.py`.)
+
+### 3. Build the gVisor sandbox (one time)
+
+```bash
+./scripts/setup_sandbox.sh           # installs runsc, registers the runtime, builds the egress proxy
+```
+
+### 4. Add this repository
+
+```bash
+git clone https://github.com/0xsharz/pyyaml-vuln-target.git
+cd pyyaml-vuln-target
+easyscan/install.sh                  # installs report deps (pillow + a mono font); smoke-tests the engine
+```
+
+> **Windows / WSL note:** drive all `wsl` calls from PowerShell (not Git Bash, which mangles
+> `/root/...` paths). Keep the double quotes around any path that contains a space.
+
+---
+
+## Usage — step by step, with examples
+
+There are two ways in: the **fully automatic** onboarder for any package, or running one of
+the **pre-built targets** directly.
+
+### A. Scan any Python package (fully automatic)
+
+```bash
+# 1) Onboard — discovers the sink, scaffolds a target, builds and self-tests it
+easyscan/onboard.sh requests==2.31.0             # a PyPI package (optionally version-pinned)
+easyscan/onboard.sh https://github.com/org/repo   # a GitHub repo
+easyscan/onboard.sh ./downloaded-code             # a local folder
+```
+```
+[1/4] discover — fetching source and grepping for sinks ...
+    [deserialization] joblib.load   pyod/utils/persistence.py:215
+[2/4] analyze — picking the entry point + example inputs ...
+[3/4] scaffold — writing targets/pyod/ ...
+[4/4] build + self-test ...
+  SELF-TEST: exploit input -> exit 134 (want 134)   benign -> exit 0 (want 0)
+  RESULT: PASS  — the target detects the vulnerability.
+```
+```bash
+# 2) Scan — only if step 1 said PASS. Blind AI run → agent-written HTML report
+easyscan/scan.sh pyod --auto-focus
+
+# 3) The report lands next to the run; open report.html in a browser
+ls -td ~/defending-code-reference-harness/results/pyod/*/ | head -1
+```
+
+**Onboard is blind by design** — you never tell it the bug or where it lives. The self-test
+is a safety gate: it refuses to hand you a scan for a sink it can't actually trigger.
+
+### B. Run a pre-built target directly
+
+```bash
+# Copy a target into the harness, build it, then scan it
+cp -r target ~/defending-code-reference-harness/targets/pyyaml
+docker build -t vuln-pipeline-pyyaml:latest ~/defending-code-reference-harness/targets/pyyaml
+
+easyscan/scan.sh pyyaml --model claude-opus-4-8 --runs 3
+```
+
+### C. Re-generate only the report (no AI scan)
+
+Useful after a run, or to regenerate with different options:
+
+```bash
+easyscan/scan.sh pyyaml --report-only results/pyyaml/<timestamp>/
+# or call the engine directly:
+.venv/bin/python easyscan/report.py results/pyyaml/<timestamp>/ --model claude-opus-4-8
+```
+
+Watch the `[easyscan] prose:` line — `agent` means the report-writer agent wrote it;
+`template` means it was throttled and fell back to the (clearly-flagged) deterministic
+template.
+
+### D. Self-test an oracle for free (no agent, no cost)
+
+Every target's oracle can be checked deterministically before spending a scan:
+
+```bash
+# malicious input -> exit 134 ; benign input -> exit 0
+docker run --rm vuln-pipeline-pyyaml:latest /work/entry /path/to/malicious.yaml; echo $?
+```
+
+---
+
+## What's in the report
+
+A professional, **light-theme**, numbered HTML page — identical in shape for every
+vulnerability class, with **no memory-safety jargon**:
+
+1. **Executive summary** — what, how severe, and that it was proven by execution
+2. **Finding overview** — severity, CVE, CVSS, CWE, component, fixed version
+3. **Description**
+4. **Attack walkthrough** — ordered steps
+5. **Proof of concept** — real captured terminal screenshots: the oracle firing, the exact
+   PoC input (readable + hexdump), and — where applicable — a **live execution witness**
+   running a harmless `id` through the injection point. Includes an honest *"Scope of this
+   proof"* caveat distinguishing "sink confirmed in an isolated harness" from "full network
+   chain replayed against a live server."
+6. **Root cause** — the exact file(s), line number(s), and verbatim vulnerable code
+7. **Exploitability & exposure** *(when provided)* — default config, auth interaction, fix scope
+8. **Impact**
+9. **Remediation** — specific, line-wise fixes with corrected, paste-ready code, matched to
+   the *actual* sink (a `pickle` / `dill` finding never gets a `yaml.safe_load` fix)
+10. **References** — CVE / CWE, linked
+
+Every report ships alongside a machine-readable `summary.json`. A sample is committed at
+[`easyscan/sample/pyyaml_report.html`](easyscan/sample/pyyaml_report.html).
+
+---
+
+## Report-time enrichment (for known CVEs)
+
+A blind, egress-locked scan cannot know facts it can't derive from the pinned source — the
+assigned CVE, the upstream fixed version, a CVSS score, or human-verified exposure notes.
+Those are supplied **after** the finding is confirmed, via an `enrichment.json` dropped in the
+results folder (or `--cve` / `--cvss` / `--fixed-version` / `--advisory` flags). Enrichment is
+**report-time only** and never touches the blind find/config, so it can't bias discovery.
+
+```jsonc
+// results/<target>/<ts>/enrichment.json
+{
+  "cve": "CVE-2026-56121",
+  "fixed_version": "0.63.0",
+  "cvss": "9.8",
+  "context": "**Pre-auth reachability.** The UDF body is deserialized before the authz check…"
+}
+```
+
+---
+
+## CI/CD gating
+
+`scan.sh` exits with a documented contract, so a CI step is a one-liner:
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Ran clean — **no confirmed finding** |
+| `2` | **Confirmed finding** present (see `report.html`) |
+| `1` | Setup/usage error before the run |
+
+```yaml
+# GitHub Actions
+- run: easyscan/scan.sh pyyaml        # job fails on exit 2 → a confirmed vuln blocks the pipeline
+- uses: actions/upload-artifact@v4
+  if: always()
+  with: { name: security-report, path: "**/report.html" }
+```
+
+---
+
+## Repository layout
 
 | Path | What it is |
 |---|---|
-| `target/` | The **PyYAML** target — unsafe deserialization RCE (CVE-2020-14343). |
-| `reportlab-target/` | The **ReportLab** target — `rl_safe_eval` sandbox-escape RCE (CVE-2023-33733). |
-| `ytdlp-target/` | The **yt-dlp** target — OS command injection via `netrc_cmd` (CVE-2026-26331). |
-| `weasyprint-target/` | The **WeasyPrint** target — SSRF via redirect bypass (CVE-2025-68616). |
-| `textract-target/` | The **textract** target — OS command injection via a filename in `textract.process()` (CVE-2016-10320). **Blind test**: config ships with no hints, so recon/find must discover the bug themselves. See its `GUIDE.md`. |
-| `easyscan/` | **One-command onboard + scan + professional HTML reporting.** `onboard.sh` points at any Python package and auto-discovers the vulnerable sink; `scan.sh` runs the blind pipeline; `report.py` builds a light-theme report (screenshot proofs, root cause with file:line + code, detailed remediation) + `summary.json` + CI exit codes. See `easyscan/ONBOARD_GUIDE.md`. |
-| `toolkit/` | Reusable oracle + one-command generator + cookbook for adding new targets. |
-| `harness-patches/` | Fixes to the harness's own code (not target-specific) — see below. |
-| `demo/`, `scripts/`, `docs/`, `artifacts/` | PyYAML-specific demo, run scripts, write-ups, evidence. |
+| `target/` | **PyYAML** target — unsafe deserialization RCE (CVE-2020-14343) |
+| `reportlab-target/` | **ReportLab** target — `rl_safe_eval` sandbox escape (CVE-2023-33733) |
+| `ytdlp-target/` | **yt-dlp** target — command injection via `netrc_cmd` (CVE-2026-26331) |
+| `weasyprint-target/` | **WeasyPrint** target — SSRF via redirect bypass (CVE-2025-68616) |
+| `textract-target/` | **textract** target — command injection, set up as a **blind test** (CVE-2016-10320) |
+| `easyscan/` | One-command **onboard + scan + professional reporting** (`onboard.sh`, `scan.sh`, `report.py`, `install.sh`, tests, guides) |
+| `toolkit/` | Reusable oracle + one-command target generator (`new_target.sh`) + **`COOKBOOK.md`** |
+| `harness-patches/` | Fixes to the harness's own code (see below) |
+| `docs/`, `demo/`, `scripts/`, `artifacts/` | Write-ups, demo assets, helper scripts, and evidence |
 
-Six targets now span four vulnerability classes: deserialization RCE,
-sandbox-escape RCE, OS command injection, and SSRF — each with a CVE
-independently verified against NVD/OSV.dev/GitHub Advisories before building,
-not assumed from memory (see each target's README for the verification trail).
-The newest, `textract-target/`, is set up as a **blind test**: its `config.yaml`
-carries no `focus_areas` and no `attack_surface` hint, so the pipeline's own
-recon step must discover the command-injection bug from the code before the
-attacker agent can exploit it (the answer key lives in `textract-target/vulns.txt`,
-which the pipeline never reads).
+Plain-language runbooks live in [`easyscan/ONBOARD_GUIDE.md`](easyscan/ONBOARD_GUIDE.md) and
+each target's `README` / `GUIDE.md`.
 
-## Onboard any Python package automatically (`easyscan/onboard.sh`)
+---
 
-Beyond the hand-built targets above, `easyscan/onboard.sh` turns **any** Python
-codebase into a scan with one command — point it at a local folder, a PyPI name,
-or a GitHub URL and it:
+## Harness patches
 
-1. **discovers** the vulnerable sink itself (greps the source for deserialization,
-   command-injection, SSTI, SSRF, and path-traversal sinks),
-2. **scaffolds** a target (Dockerfile + entry + blind config + oracle),
-3. **builds + self-tests** it — verifying the exploit input aborts (exit 134) and
-   a benign one exits 0 — then **stops**, so you scan only a verified target.
+Three fixes to the upstream harness (not target-specific) ship in `harness-patches/`, each
+documented with root cause, fix, and validation:
 
-Blind by design: you never tell it the bug. Validated end-to-end by onboarding
-**pyod 3.5.2** from just the package name — it discovered the `joblib.load` sink
-in `pyod/utils/persistence.py` (CVE-2026-15529) on its own, and the self-test
-PASSED. Step-by-step: **`easyscan/ONBOARD_GUIDE.md`**.
+1. **Agent-image packaging** (`agent_image.py`) — the agent container now builds *from the
+   target image*, so a target's pip-installed dependencies and compiled extensions survive
+   (this is what let the ReportLab target grade correctly instead of `ModuleNotFoundError`).
+2. **Honest oracle vocabulary** (`asan.py`) — the crash parser recognizes the honest
+   `SECURITY-ORACLE` banner, so nothing has to pretend to be AddressSanitizer.
+3. **Pipeline vocabulary rename** — the core status model reads `finding_confirmed` /
+   `FindingArtifact` / `finding_type` instead of `crash_*`, so no part of the contract
+   assumes memory safety (354 harness tests pass).
 
-## Three harness-level fixes shipped here (`harness-patches/`)
+---
 
-1. **Agent-image packaging** (`agent_image.py`) — the container that runs
-   find/grade/report agents only kept `/work` from the target image, silently
-   dropping any pip-installed dependency, a different Python version, or a
-   compiled C extension. Fixed by building the agent image **FROM the target
-   image** so its whole runtime survives. This is what let the ReportLab
-   target grade correctly instead of hitting `ModuleNotFoundError`.
-2. **Crash-output vocabulary, output text** (`asan.py`) — the oracle's stderr
-   banner no longer claims to be AddressSanitizer for non-memory findings.
-3. **Crash-output vocabulary, the whole pipeline** (`harness/`, `tests/`) —
-   a full rename of the core status/data-model (`crash_found` → `finding_confirmed`,
-   `CrashArtifact` → `FindingArtifact`, `crash_type`/`crash_output` →
-   `finding_type`/`finding_evidence`, ...) across find/grade/judge/report/patch
-   and every prompt, so nothing in the pipeline's own contract assumes memory
-   safety. 354 tests pass; see `harness-patches/README.md` for full detail,
-   the deliberate scope cuts, and the real-agent validation run.
+## Testing
 
-## Result (21 Jul 2026)
-
-An autonomous `claude-opus-4-8` agent independently discovered, and the pipeline
-confirmed and graded, a **CRITICAL** arbitrary-code-execution finding:
-
-- 99-byte YAML proof-of-concept, `exit 134` on the oracle, reproduced **3/3**.
-- Grade **0.9**, rubric **9/10**, verdict **REACHABLE**, severity **CRITICAL**.
-- Re-found by a second agent and correctly de-duplicated.
-- Benign YAML → clean exit 0 (negative control passes → no false positives).
-
-See `docs/PyYAML_Target_Security_Assessment.docx` for the full write-up.
-
-## The key idea — a honest, tool-agnostic vulnerability oracle
-
-Unsafe `yaml.load` runs attacker code *without crashing*, so there is no ASAN to
-fire. `target/entry.py` builds the ASAN-equivalent using Python audit hooks
-(PEP 578, `toolkit/harness_oracle.py`): it terminates the process
-(`os._exit(134)`) the instant deserialization reaches a code-exec /
-dangerous-import / outbound-socket / sensitive-file primitive.
-
-**Naming note (fixed 2026-07-21):** the oracle used to print a banner claiming
-to be `AddressSanitizer` — misleading for a bug class that has nothing to do
-with memory safety. It now prints an honest `SECURITY-ORACLE` banner naming the
-real primitive reached (e.g. `os.system`, `compile`) and the **real Python call
-stack** at the moment it fired (not a placeholder). `harness-patches/asan.py`
-adds a small, additive parser rule so the harness's own dedup/report tooling
-recognizes this honest format (`SUMMARY: SecurityOracle: <sink> ...`) exactly
-as well as it recognizes native ASAN output — nothing pretends to be a memory
-tool, and nothing is lost in translation. See `toolkit/harness_oracle.py`'s
-module docstring for the full explanation.
-
-## Layout
-
-```
-target/     the harness target: Dockerfile + entry.py (oracle) + config.yaml + docs
-scripts/    helper scripts you run from PowerShell (check/build/test/run/status/...)
-artifacts/  evidence from the confirmed run (PoC, oracle record, report, grader verdict)
-docs/       runbook plan, step-by-step how-to (plain language), and the formal report
+```bash
+.venv/bin/python -m pytest easyscan/tests/ -q      # 44 unit tests (report engine + onboarder)
 ```
 
-## Quick start
+The deterministic engines are fully unit-tested: PNG rendering, CVE/CWE/severity mapping, both
+`result.json` schemas, the safe Markdown→HTML renderer, the generic prose template + agent-
+output merge, sink-specific remediation, honest-framing checks, report-time enrichment,
+binary-PoC handling, and the onboarder's sink discovery, input routing, and scaffolding.
 
-Full instructions: `docs/PyYAML_HowToRun_StepByStep.md`. In short (from PowerShell):
+---
 
-1. Copy `target/` into the harness at `targets/pyyaml/` (or use the pre-staged copy
-   in WSL at `/root/defending-code-reference-harness/targets/pyyaml/`).
-2. `docker build -t vuln-pipeline-pyyaml:latest targets/pyyaml`
-3. Self-test the oracle (free): malicious gadget → exit 134; benign → exit 0.
-4. `bin/vp-sandboxed run pyyaml --model claude-opus-4-8 --runs 3 --stream`
+## Security & authorized use
 
-## Difficulty knob
+> This repository deliberately contains **working exploits** and **pinned-vulnerable
+> dependencies**, for **authorized security research and defensive testing only**. Do not
+> deploy the targets. Run them exclusively inside the sandboxed harness. Every CVE referenced
+> here was verified against public advisories before a target was built; blind-test targets
+> keep the answer key (`vulns.txt`) out of the pipeline's reach so discovery stays honest.
 
-In `target/entry.py`, the `Loader=` in the `yaml.load(...)` call:
-`FullLoader` = the real CVE-2020-14343 (default) · `UnsafeLoader` = trivial/reliable
-· `SafeLoader` = negative control (must never fire).
+---
 
-## Provenance
+## License
 
-- Target: PyYAML pinned to tag **5.3.1** (commit `20a120055ce2d702d8977c76b48033160b7b7c92`).
-- Harness: Anthropic defending-code-reference (`vuln-pipeline`), run under gVisor + egress allowlist.
-- Remediation for the underlying bug: use `yaml.safe_load`, or upgrade to PyYAML ≥ 5.4.
-
-> Security note: this repository deliberately contains a working RCE exploit and a
-> pinned-vulnerable dependency **for authorized security research only**. Do not
-> deploy the target; run it only inside the sandboxed harness.
+Apache-2.0. See SPDX headers in source files.
