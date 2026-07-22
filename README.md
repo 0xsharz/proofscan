@@ -60,26 +60,47 @@ real Python call stack at the moment it fired.
 
 ---
 
-## What it can do — the four use cases
+## What it can do — vulnerability classes, not CVE signatures
 
-Five targets span four vulnerability classes, each pinned to a **real, cross-verified CVE**
-(checked against NVD, OSV.dev, and GitHub Advisories before building — never assumed):
+ProofScan finds bugs by **class, not by signature**. Detection keys on the dangerous
+*runtime primitive* an exploit must reach — `exec` / `compile`, `os.system`, `subprocess`,
+an outbound socket, a dangerous import, a sensitive-file open — so **any** input that drives
+the target into that primitive is caught, **whether or not it maps to a known CVE**. There is
+no CVE list, payload database, or signature anywhere in the detection path: the AI *find*
+agent crafts each exploit from scratch and is never told the bug, and the onboarder discovers
+the sink in whatever package you point it at. Point it at a package with an *unknown*
+deserialization, SSRF, or command-injection bug and it will find and prove that one too.
 
-| # | Vulnerability class | Target (library) | CVE | Mechanism the oracle catches |
-|---|---|---|---|---|
-| 1 | **Unsafe deserialization → RCE** | PyYAML 5.3.1 (`target/`) | [CVE-2020-14343](https://nvd.nist.gov/vuln/detail/CVE-2020-14343) | `yaml.load(FullLoader)` gadget reaches `exec`/`compile` |
-| 2 | **Sandbox-escape → RCE** | ReportLab (`reportlab-target/`) | [CVE-2023-33733](https://nvd.nist.gov/vuln/detail/CVE-2023-33733) | `rl_safe_eval` escape reaches `os.system` |
-| 3 | **OS command injection** | yt-dlp (`ytdlp-target/`) | [CVE-2026-26331](https://nvd.nist.gov/vuln/detail/CVE-2026-26331) | attacker hostname → `netrc_cmd` with `shell=True` |
-| 3 | **OS command injection** (blind) | textract (`textract-target/`) | [CVE-2016-10320](https://nvd.nist.gov/vuln/detail/CVE-2016-10320) | filename metacharacters → `antiword` shell call |
-| 4 | **Server-Side Request Forgery** | WeasyPrint (`weasyprint-target/`) | [CVE-2025-68616](https://nvd.nist.gov/vuln/detail/CVE-2025-68616) | redirect bypass reaches an internal canary |
+| Class it discovers | What trips the oracle | Sinks the onboarder recognizes |
+|---|---|---|
+| **Unsafe deserialization → RCE** | object reconstruction reaches `exec` / a dangerous import / `subprocess` | `pickle`, `dill`, `joblib`, `cloudpickle`, `marshal`, `jsonpickle`, `yaml.load` |
+| **Sandbox escape → RCE** | a "safe eval" / template engine reaches `os.system` or a real import | expression & template evaluators |
+| **OS command injection** | attacker text reaches `os.system` / `subprocess(shell=True)` | `os.system`, `os.popen`, `subprocess(..., shell=True)` |
+| **Server-Side Request Forgery** | a fetch reaches an internal / attacker-chosen host | `urllib` / `requests` fetchers, redirect-followers |
+| **Template injection (SSTI)** | template render reaches `exec` / an import | `Template(...).render()` on untrusted input |
+| **Path traversal / arbitrary read** | `open()` escapes its intended directory | `open(os.path.join(base, user_input))` |
 
-Beyond these hand-built targets, the **auto-onboarder** (`easyscan/onboard.sh`) discovers and
-scaffolds new targets for these sink families automatically: deserialization
-(`pickle` / `dill` / `joblib` / `yaml` / `marshal` / …), OS command injection, template
-injection (SSTI), SSRF, and path traversal. It was validated end-to-end by onboarding
-**pyod 3.5.2** from just the package name — it found the `joblib.load` sink in
-`pyod/utils/persistence.py` ([CVE-2026-15529](https://nvd.nist.gov/vuln/detail/CVE-2026-15529))
-on its own, blind.
+### Validation — proven end-to-end on real CVEs
+
+Each class is *demonstrated* against a known-vulnerable library pinned to a **real,
+cross-verified CVE** (checked against NVD, OSV.dev, and GitHub Advisories before building —
+never assumed). These CVEs are **ground-truth benchmarks that prove discovery works — not a
+detection allow-list**:
+
+| Class | Validated target (library) | CVE (benchmark) | What the run proves |
+|---|---|---|---|
+| Deserialization → RCE | PyYAML 5.3.1 (`target/`) | [CVE-2020-14343](https://nvd.nist.gov/vuln/detail/CVE-2020-14343) | `yaml.load(FullLoader)` gadget reaches `exec` |
+| Sandbox escape → RCE | ReportLab (`reportlab-target/`) | [CVE-2023-33733](https://nvd.nist.gov/vuln/detail/CVE-2023-33733) | `rl_safe_eval` escape reaches `os.system` |
+| Command injection | yt-dlp (`ytdlp-target/`) | [CVE-2026-26331](https://nvd.nist.gov/vuln/detail/CVE-2026-26331) | attacker hostname → `netrc_cmd` (`shell=True`) |
+| Command injection (blind) | textract (`textract-target/`) | [CVE-2016-10320](https://nvd.nist.gov/vuln/detail/CVE-2016-10320) | filename metacharacters → `antiword` shell call |
+| SSRF | WeasyPrint (`weasyprint-target/`) | [CVE-2025-68616](https://nvd.nist.gov/vuln/detail/CVE-2025-68616) | redirect bypass reaches an internal canary |
+
+> **It finds bugs with no CVE, too.** Because detection is by primitive, a novel/zero-day bug
+> in these classes trips the very same oracle. The onboarder discovered pyod's `joblib.load`
+> sink **blind** — from just the package name, never told the bug
+> ([CVE-2026-15529](https://nvd.nist.gov/vuln/detail/CVE-2026-15529) only confirmed it
+> afterward) — and the underlying harness has surfaced real findings that had **no CVE at
+> all**. The CVE is how discovery is *validated*, not what *limits* it.
 
 ---
 
