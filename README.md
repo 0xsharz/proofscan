@@ -23,7 +23,7 @@ pipeline can detect.
 ## Table of contents
 
 - [Why this exists](#why-this-exists)
-- [What it can do — the four use cases](#what-it-can-do--the-four-use-cases)
+- [What it can do — vulnerability classes](#what-it-can-do--vulnerability-classes)
 - [Language & tech stack](#language--tech-stack)
 - [How it works](#how-it-works)
 - [Setup](#setup)
@@ -60,16 +60,14 @@ real Python call stack at the moment it fired.
 
 ---
 
-## What it can do — vulnerability classes, not CVE signatures
+## What it can do — vulnerability classes
 
-ProofScan finds bugs by **class, not by signature**. Detection keys on the dangerous
-*runtime primitive* an exploit must reach — `exec` / `compile`, `os.system`, `subprocess`,
-an outbound socket, a dangerous import, a sensitive-file open — so **any** input that drives
-the target into that primitive is caught, **whether or not it maps to a known CVE**. There is
-no CVE list, payload database, or signature anywhere in the detection path: the AI *find*
-agent crafts each exploit from scratch and is never told the bug, and the onboarder discovers
-the sink in whatever package you point it at. Point it at a package with an *unknown*
-deserialization, SSRF, or command-injection bug and it will find and prove that one too.
+ProofScan discovers bugs by **class**. Its oracle keys on the dangerous *runtime primitive*
+an exploit must reach — `exec` / `compile`, `os.system`, `subprocess`, an outbound socket, a
+dangerous import, a sensitive-file open — so it catches any input that drives a target into
+that primitive. The AI *find* agent crafts each exploit from scratch, and the onboarder
+discovers the sink in whatever package you point it at — so it works on your own code as well
+as the examples below.
 
 | Class it discovers | What trips the oracle | Sinks the onboarder recognizes |
 |---|---|---|
@@ -80,12 +78,10 @@ deserialization, SSRF, or command-injection bug and it will find and prove that 
 | **Template injection (SSTI)** | template render reaches `exec` / an import | `Template(...).render()` on untrusted input |
 | **Path traversal / arbitrary read** | `open()` escapes its intended directory | `open(os.path.join(base, user_input))` |
 
-### Validation — proven end-to-end on real CVEs
+### Validated on real CVEs
 
-Each class is *demonstrated* against a known-vulnerable library pinned to a **real,
-cross-verified CVE** (checked against NVD, OSV.dev, and GitHub Advisories before building —
-never assumed). These CVEs are **ground-truth benchmarks that prove discovery works — not a
-detection allow-list**:
+Each class is demonstrated end-to-end against a known-vulnerable library pinned to a **real,
+cross-verified CVE** (checked against NVD, OSV.dev, and GitHub Advisories before building):
 
 | Class | Validated target (library) | CVE (benchmark) | What the run proves |
 |---|---|---|---|
@@ -95,12 +91,9 @@ detection allow-list**:
 | Command injection (blind) | textract (`textract-target/`) | [CVE-2016-10320](https://nvd.nist.gov/vuln/detail/CVE-2016-10320) | filename metacharacters → `antiword` shell call |
 | SSRF | WeasyPrint (`weasyprint-target/`) | [CVE-2025-68616](https://nvd.nist.gov/vuln/detail/CVE-2025-68616) | redirect bypass reaches an internal canary |
 
-> **It finds bugs with no CVE, too.** Because detection is by primitive, a novel/zero-day bug
-> in these classes trips the very same oracle. The onboarder discovered pyod's `joblib.load`
-> sink **blind** — from just the package name, never told the bug
-> ([CVE-2026-15529](https://nvd.nist.gov/vuln/detail/CVE-2026-15529) only confirmed it
-> afterward) — and the underlying harness has surfaced real findings that had **no CVE at
-> all**. The CVE is how discovery is *validated*, not what *limits* it.
+The onboarder was validated the same way: pointed at **pyod 3.5.2** by name, it discovered the
+`joblib.load` sink in `pyod/utils/persistence.py`
+([CVE-2026-15529](https://nvd.nist.gov/vuln/detail/CVE-2026-15529)) on its own.
 
 ---
 
