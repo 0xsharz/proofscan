@@ -83,7 +83,7 @@ cross-verified CVE** (checked against NVD, OSV.dev, and GitHub Advisories before
 
 | Class | Validated target (library) | CVE (benchmark) | What the run proves |
 |---|---|---|---|
-| Deserialization → RCE | PyYAML 5.3.1 (`target/`) | [CVE-2020-14343](https://nvd.nist.gov/vuln/detail/CVE-2020-14343) | `yaml.load(FullLoader)` gadget reaches `exec` |
+| Deserialization → RCE | PyYAML 5.3.1 (`pyyaml-target/`) | [CVE-2020-14343](https://nvd.nist.gov/vuln/detail/CVE-2020-14343) | `yaml.load(FullLoader)` gadget reaches `exec` |
 | Sandbox escape → RCE | ReportLab (`reportlab-target/`) | [CVE-2023-33733](https://nvd.nist.gov/vuln/detail/CVE-2023-33733) | `rl_safe_eval` escape reaches `os.system` |
 | Command injection | yt-dlp (`ytdlp-target/`) | [CVE-2026-26331](https://nvd.nist.gov/vuln/detail/CVE-2026-26331) | attacker hostname → `netrc_cmd` (`shell=True`) |
 | Command injection (blind) | textract (`textract-target/`) | [CVE-2016-10320](https://nvd.nist.gov/vuln/detail/CVE-2016-10320) | filename metacharacters → `antiword` shell call |
