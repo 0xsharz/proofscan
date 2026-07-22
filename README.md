@@ -15,15 +15,38 @@ detection oracle instead of relying on ASAN.
 | `reportlab-target/` | The **ReportLab** target — `rl_safe_eval` sandbox-escape RCE (CVE-2023-33733). |
 | `ytdlp-target/` | The **yt-dlp** target — OS command injection via `netrc_cmd` (CVE-2026-26331). |
 | `weasyprint-target/` | The **WeasyPrint** target — SSRF via redirect bypass (CVE-2025-68616). |
-| `easyscan/` | **One-command install + trigger + professional HTML reporting** (rendered terminal-screenshot proofs, plain-language walkthrough, remediation) + `summary.json` + CI exit codes. Hybrid: agent writes the prose, code draws the proofs. |
+| `textract-target/` | The **textract** target — OS command injection via a filename in `textract.process()` (CVE-2016-10320). **Blind test**: config ships with no hints, so recon/find must discover the bug themselves. See its `GUIDE.md`. |
+| `easyscan/` | **One-command onboard + scan + professional HTML reporting.** `onboard.sh` points at any Python package and auto-discovers the vulnerable sink; `scan.sh` runs the blind pipeline; `report.py` builds a light-theme report (screenshot proofs, root cause with file:line + code, detailed remediation) + `summary.json` + CI exit codes. See `easyscan/ONBOARD_GUIDE.md`. |
 | `toolkit/` | Reusable oracle + one-command generator + cookbook for adding new targets. |
 | `harness-patches/` | Fixes to the harness's own code (not target-specific) — see below. |
 | `demo/`, `scripts/`, `docs/`, `artifacts/` | PyYAML-specific demo, run scripts, write-ups, evidence. |
 
-Five targets now span four vulnerability classes: deserialization RCE,
+Six targets now span four vulnerability classes: deserialization RCE,
 sandbox-escape RCE, OS command injection, and SSRF — each with a CVE
 independently verified against NVD/OSV.dev/GitHub Advisories before building,
 not assumed from memory (see each target's README for the verification trail).
+The newest, `textract-target/`, is set up as a **blind test**: its `config.yaml`
+carries no `focus_areas` and no `attack_surface` hint, so the pipeline's own
+recon step must discover the command-injection bug from the code before the
+attacker agent can exploit it (the answer key lives in `textract-target/vulns.txt`,
+which the pipeline never reads).
+
+## Onboard any Python package automatically (`easyscan/onboard.sh`)
+
+Beyond the hand-built targets above, `easyscan/onboard.sh` turns **any** Python
+codebase into a scan with one command — point it at a local folder, a PyPI name,
+or a GitHub URL and it:
+
+1. **discovers** the vulnerable sink itself (greps the source for deserialization,
+   command-injection, SSTI, SSRF, and path-traversal sinks),
+2. **scaffolds** a target (Dockerfile + entry + blind config + oracle),
+3. **builds + self-tests** it — verifying the exploit input aborts (exit 134) and
+   a benign one exits 0 — then **stops**, so you scan only a verified target.
+
+Blind by design: you never tell it the bug. Validated end-to-end by onboarding
+**pyod 3.5.2** from just the package name — it discovered the `joblib.load` sink
+in `pyod/utils/persistence.py` (CVE-2026-15529) on its own, and the self-test
+PASSED. Step-by-step: **`easyscan/ONBOARD_GUIDE.md`**.
 
 ## Three harness-level fixes shipped here (`harness-patches/`)
 

@@ -1,0 +1,47 @@
+ANSWER KEY / SPOILER — human reference only.
+The pipeline NEVER reads this file. Do NOT paste any of it into config.yaml;
+that would defeat the blind test.
+============================================================================
+
+CVE-2016-10320 — textract < 1.5.0 — OS command injection (CWE-78).
+Verified: NVD (CVSS v2 9.3), OSV.dev (PyPI textract, fixed 1.5.0), Snyk.
+
+Root cause
+----------
+textract.process(filename) routes by file extension. For .pdf (and .doc, .gif,
+and other shell-backed parsers) it uses a ShellParser that builds a command
+STRING by interpolating the filename, then runs it through /bin/sh:
+
+  textract/parsers/pdf_parser.py
+      self.run('pdftotext %(layout)s "%(filename)s" -' % locals())
+
+  textract/parsers/utils.py  (ShellParser.run)
+      pipe = subprocess.Popen(command, shell=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+The filename is placed inside double quotes but never escaped, so shell-active
+characters in the filename (notably $(...) and backticks, which stay active
+inside double quotes) are evaluated by the shell.
+
+Fixed in 1.5.0 by switching to an argument list with no shell:
+      args = ['pdftotext', filename, '-'];  subprocess.Popen(args, ...)
+
+Exploit input for THIS target
+-----------------------------
+The entry reads its input file's single line as the filename. A filename such as
+
+      $(touch pwned).pdf
+
+makes textract run:  pdftotext "$(touch pwned).pdf" -
+and /bin/sh executes  touch pwned  before pdftotext. The injection fires even
+when pdftotext is absent (the shell evaluates $() before the exec fails).
+
+How this target's oracle detects it
+-----------------------------------
+entry.py wraps subprocess.Popen; when the target is about to run a shell=True
+command whose text contains shell metacharacters ($ ` ; | & > < newline) — which
+a clean `pdftotext "file.pdf" -` never has — it prints the SecurityOracle banner
+and exits 134. Any injection payload trips it, not just the example above.
+
+Negative control (must exit 0): input file containing a plain name like
+      report.pdf

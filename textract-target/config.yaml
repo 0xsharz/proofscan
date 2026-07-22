@@ -1,0 +1,28 @@
+# textract target — BLIND configuration.
+#
+# This target intentionally tells the pipeline NOTHING about the vulnerability.
+# focus_areas is empty and there is NO attack_surface hint, so recon / find must
+# discover the bug from the code by themselves. The answer key lives in
+# vulns.txt, which the pipeline never reads.
+
+image_tag: vuln-pipeline-textract:latest
+github_url: https://github.com/deanmalmgren/textract
+commit: "1.4.0"
+
+binary_path: /work/entry
+source_root: /work
+
+# Confirms the library is importable; not a hint about the bug.
+build_command: python2 -c "import textract"
+
+known_bugs: []
+
+# Deliberately empty — this is the blind test. Run recon (or --auto-focus) to
+# have the pipeline populate focus areas from the code on its own.
+#
+# attack_surface is intentionally omitted for the same reason. The harness treats
+# it as optional and only reads it at REPORT time (after a finding is already
+# confirmed) — the find/recon attacker stages never see it — so leaving it out
+# keeps the test fully blind while the pipeline falls back to a generic surface
+# description for the write-up.
+focus_areas: []

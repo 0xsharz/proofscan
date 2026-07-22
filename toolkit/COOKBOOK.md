@@ -5,6 +5,13 @@ The toolkit gives you that crash for free via `harness_oracle.py`, so adding a n
 Python vuln class is usually just: **pick a vulnerable library + write one sink line
 + know one exploit payload.** Run `new_target.sh`, build, self-test, run.
 
+> **Want it fully automatic?** `easyscan/onboard.sh <folder | pypi-name | github-url>`
+> does all of this for you — it greps the source for the sink patterns below, an
+> agent picks the real entry point and writes the example inputs, and it scaffolds
+> + builds + self-tests the target automatically, then stops with the scan command.
+> Use this cookbook when you want to do it by hand, or to understand what onboard
+> is doing under the hood. Step-by-step: `easyscan/ONBOARD_GUIDE.md`.
+
 ## The 4-step recipe
 
 1. **Pick a target library** and pin a known-vulnerable version (`--pip`, `--git`, `--tag`, `--commit`).

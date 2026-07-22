@@ -1,21 +1,30 @@
 # EasyScan — one-command pipeline + professional reporting
 
-A thin wrapper on top of the `defending-code-reference` harness: install it
-once, trigger a scan with one command, and get a **professional, self-contained
-HTML security report** — with rendered terminal-screenshot proofs, a
-plain-language step-by-step walkthrough, severity/CVE/CWE, and remediation —
-plus a machine-readable `summary.json` and a CI-friendly exit code.
+A thin wrapper on top of the `defending-code-reference` harness: **onboard any
+Python package** with one command, trigger a scan, and get a **professional,
+self-contained HTML security report** — rendered terminal-screenshot proofs, a
+plain-language walkthrough, severity/CVE/CWE, root cause with file:line + code,
+and remediation — plus a machine-readable `summary.json` and a CI-friendly exit
+code.
 
 ## The hybrid principle
 
-> The agent writes the story; the code draws the pictures and builds the page.
+> One agent writes the whole story; the code draws the pictures and builds the page.
 
-- An **LLM report-writer** (`claude -p`) produces the human prose — executive
-  summary, plain-language walkthrough, tailored remediation.
+- A **single LLM report-writer** (`claude -p`) writes the entire narrative in
+  **generic, class-agnostic sections** — executive summary, description, attack
+  walkthrough, root cause (with real file:line + verbatim code), impact, and
+  detailed line-wise remediation. It works the same for every class
+  (deserialization, sandbox escape, command injection, SSRF, memory) — no
+  memory-safety jargon leaks in.
+- The pipeline's own `report.json` (produced in-sandbox, with source access) is
+  used as **input** to that agent, never shown raw — that's how the report gets
+  exact line numbers and verbatim code.
 - **Deterministic Python** renders the terminal-screenshot PNG proofs, maps
-  CVE/CWE, and assembles the self-contained HTML + `summary.json`.
-- If the agent is unavailable or throttled, a deterministic template takes
-  over, so **a report always renders** (add `--no-agent` to force it).
+  CVE/CWE/severity, and assembles the self-contained, **light-theme** HTML +
+  `summary.json`.
+- If the agent is unavailable or throttled, a deterministic (also generic)
+  template takes over, so **a report always renders** (add `--no-agent` to force it).
 
 ## Install (once)
 
@@ -25,13 +34,36 @@ easyscan/install.sh
 Verifies docker / token / gVisor are ready, installs the report deps
 (`pillow` + a mono font), and smoke-tests the engine. Idempotent.
 
+## Onboard any Python package (one command)
+
+Point at a folder, a PyPI name, or a GitHub URL — it **discovers the vulnerable
+sink itself**, scaffolds a target, builds it, and self-tests it, then stops with
+the scan command. Blind by design: you never tell it the bug.
+
+```bash
+easyscan/onboard.sh ./downloaded-code
+easyscan/onboard.sh some-pypi-package==1.2.3
+easyscan/onboard.sh https://github.com/org/repo
+```
+
+Flow: discover (grep all classes) → analyze (an agent picks the entry point +
+writes example inputs) → scaffold → build → **self-test gate** (exploit → exit
+134, benign → exit 0). Validated blind on **pyod 3.5.2** — it found `joblib.load`
+in `persistence.py` (CVE-2026-15529) on its own. Full step-by-step:
+**`ONBOARD_GUIDE.md`**.
+
 ## Trigger a scan (one command)
 
 ```bash
-easyscan/scan.sh <target>                 # full AI run, then report
+easyscan/scan.sh <target>                 # full AI run -> witness -> report
+easyscan/scan.sh textract --auto-focus    # blind run: recon discovers focus areas first
 easyscan/scan.sh pyyaml --model claude-opus-4-8 --runs 3
-easyscan/scan.sh pyyaml --report-only results/pyyaml/<ts>/   # re-report only
+easyscan/scan.sh pyyaml --report-only results/pyyaml/<ts>/   # re-report only, no AI run
 ```
+
+After the run, if the target ships a `targets/<target>/witness.sh`, scan.sh runs
+a **harmless command through the same sink** in the sandbox and captures the real
+output as `exec_proof.txt` — rendered in the report as a live execution proof.
 
 Outputs land next to the run:
 - `results/<target>/<ts>/report.html` — the professional report (open in a browser).
@@ -63,26 +95,47 @@ Outputs land next to the run:
 
 ## What's in the report
 
-Executive summary → finding-at-a-glance (severity badge, CVE, CWE) →
-step-by-step "how it works" → **proof screenshots** (the detection oracle
-firing, the PoC hexdump, the reproduction command — real captured output
-rendered as dark-terminal images) → the pipeline's technical analysis →
-recommendations. A sample is committed at `easyscan/sample/pyyaml_report.html`.
+A professional, **light-theme**, numbered layout — the same shape for every
+vulnerability class:
+
+1. **Executive summary**
+2. **Finding overview** — severity badge, CVE, CWE, component
+3. **Description**
+4. **Attack walkthrough** — step by step
+5. **Proof of concept** — real captured screenshots: the detection oracle firing,
+   the exact PoC input (readable + hexdump), and (for command injection) a **live
+   execution witness** running a harmless `id` through the injection point
+6. **Root cause** — the exact file(s), line number(s), and verbatim vulnerable code
+7. **Impact**
+8. **Remediation** — specific, line-wise fixes with corrected, paste-ready code
+9. **References** — CVE / CWE, linked
+
+A sample is committed at `easyscan/sample/pyyaml_report.html`.
 
 ## Tests
 
 ```bash
 .venv/bin/python -m pytest easyscan/tests/ -q
 ```
-The deterministic engine (`report.py`) is fully unit-tested — PNG rendering,
-CVE/CWE mapping, both result.json schemas (old `crash*` and new `finding*`),
-HTML self-containment + escaping, and the summary schema.
+The deterministic engines (`report.py` + `onboard.py`) are unit-tested (32 tests)
+— PNG rendering, CVE/CWE mapping, both result.json schemas (old `crash*` and new
+`finding*`), the safe Markdown→HTML renderer, the generic prose template +
+agent-output merge, the proof builder (incl. the execution witness), HTML
+self-containment + escaping, the summary schema, and onboard's sink discovery,
+input-type routing, and scaffolding.
 
 ## Files
 
 - `install.sh` — one-command setup.
+- `onboard.sh` / `onboard.py` — the auto-onboarder: point at any Python code, it
+  discovers the sink, scaffolds a target, builds it, and self-tests it.
+- `ONBOARD_GUIDE.md` — plain-language step-by-step for the onboard → scan → report flow.
 - `scan.sh` — one-command trigger + exit-code contract.
-- `report.py` — the deterministic report engine (screenshots, HTML, summary) +
-  the report-writer agent call with template fallback.
-- `tests/test_report.py` — unit tests.
+- `report.py` — the report engine: proof screenshots, safe Markdown→HTML, the
+  self-contained light-theme page, `summary.json`, and the single report-writer
+  agent (generic sections) with a generic template fallback.
+- `tests/test_report.py` + `tests/test_onboard.py` — unit tests (32).
 - `sample/pyyaml_report.html` — a real generated report, for reference.
+
+The optional per-target execution witness lives with each target as
+`targets/<target>/witness.sh` (not here) — scan.sh runs it automatically.
